@@ -234,12 +234,8 @@ export function updateGoalkeeper(keeper, dt, state = 'idle') {
     ud.head.rotation.x = 0.3; // Looking down
   }
 
-  // Reset animation state when needed
-  if (state !== 'idle' && state !== 'celebrate' && state !== 'dejected' && t > 1.5) {
-    ud.animTime = 0;
-    keeper.position.x = 0;
-    keeper.rotation.set(0, 0, 0);
-  }
+  // Note: Dive animations persist until game logic explicitly resets the keeper
+  // by calling resetPositions() or setting state back to 'idle'
 }
 
 // Get keeper bounding boxes for collision

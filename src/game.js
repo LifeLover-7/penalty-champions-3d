@@ -177,10 +177,12 @@ export class Game {
     this.aiKeeper.position.set(0, 0, 0.5);
     this.aiKeeper.rotation.set(0, 0, 0);
     this.aiKeeper.userData.animTime = 0;
+    this.aiKeeper.userData.animState = 'idle';
 
     this.playerKeeper.position.set(0, 0, 0.5);
     this.playerKeeper.rotation.set(0, 0, 0);
     this.playerKeeper.userData.animTime = 0;
+    this.playerKeeper.userData.animState = 'idle';
   }
 
   // === PLAYER SHOOTING TURN ===
@@ -351,12 +353,12 @@ export class Game {
     const effectiveDt = dt * this.slowMo;
 
     // Update camera with lerp
-    this.camera.position.lerp(this.cameraPosition, 0.03);
-    const currentLookAt = new THREE.Vector3();
-    this.camera.getWorldDirection(currentLookAt);
-    const targetLookAt = this.cameraTarget.clone().sub(this.camera.position).normalize();
-    currentLookAt.lerp(targetLookAt, 0.05);
-    this.camera.lookAt(this.camera.position.clone().add(currentLookAt.multiplyScalar(10)));
+    this.camera.position.lerp(this.cameraPosition, 0.04);
+
+    // Smoothly move the lookAt target
+    if (!this._currentLookAt) this._currentLookAt = this.cameraTarget.clone();
+    this._currentLookAt.lerp(this.cameraTarget, 0.06);
+    this.camera.lookAt(this._currentLookAt);
 
     // Camera shake
     if (this.shakeIntensity > 0) {
