@@ -1,116 +1,155 @@
-// src/physics.js - Physics Engine: Magnus Effect, Collisions, Swipe Input
+// src/physics.js - Fixed Timestep Physics, Swipe Input & Magnus Aerodynamics
 
 import * as THREE from 'three';
+import { COORDINATES, PHYSICS, GOAL_ZONES } from './constants.js';
 
-// === CONSTANTS ===
-const GRAVITY = -9.81;
-const AIR_RESISTANCE = 0.02;
-const MAGNUS_COEFFICIENT = 0.000015;
-const BALL_RADIUS = 0.35;
-const GROUND_FRICTION = 0.7;
-const RESTITUTION = 0.5;
+const {
+  BALL_RADIUS,
+  POST_RADIUS,
+  LEFT_POST_X,
+  RIGHT_POST_X,
+  CROSSBAR_Y,
+  BALL_START
+} = COORDINATES;
 
-// === SWIPE INPUT TRACKER ===
+const {
+  GRAVITY,
+  AIR_DRAG,
+  MAGNUS_FACTOR,
+  MAX_DT,
+  SUB_STEPS,
+  MIN_SWIPE_PX,
+  VZ_MIN,
+  VZ_MAX,
+  VY_MIN,
+  VY_MAX,
+  VX_MAX,
+  OMEGA_MAX,
+  POST_COLLISION_DIST,
+  GOAL_INNER_X,
+  GOAL_INNER_Y,
+  NET_DEPTH_CLAMP,
+  KEEPER_SAVE_Z_MAX,
+  KEEPER_SAVE_Z_MIN,
+  MISS_Z_LIMIT
+} = PHYSICS;
+
+// === RELIABLE SWIPE INPUT TRACKER ===
 export class SwipeTracker {
   constructor(canvas) {
     this.canvas = canvas;
     this.isTracking = false;
-    this.startPos = null;
-    this.path = [];
+    this.startX = 0;
+    this.startY = 0;
     this.startTime = 0;
-    this.currentPos = null;
+    this.path = [];
+    this.lastProcessedSwipe = null;
 
     this.onPointerDown = this.onPointerDown.bind(this);
     this.onPointerMove = this.onPointerMove.bind(this);
     this.onPointerUp = this.onPointerUp.bind(this);
 
     canvas.addEventListener('pointerdown', this.onPointerDown);
-    canvas.addEventListener('pointermove', this.onPointerMove);
-    canvas.addEventListener('pointerup', this.onPointerUp);
-    canvas.addEventListener('pointercancel', this.onPointerUp);
+    window.addEventListener('pointermove', this.onPointerMove);
+    window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('pointercancel', this.onPointerUp);
   }
 
   onPointerDown(e) {
     this.isTracking = true;
-    this.startPos = { x: e.clientX, y: e.clientY };
-    this.currentPos = { x: e.clientX, y: e.clientY };
-    this.path = [{ x: e.clientX, y: e.clientY }];
+    this.startX = e.clientX;
+    this.startY = e.clientY;
     this.startTime = performance.now();
+    this.path = [{ x: e.clientX, y: e.clientY, time: this.startTime }];
   }
 
   onPointerMove(e) {
     if (!this.isTracking) return;
-    this.currentPos = { x: e.clientX, y: e.clientY };
-    this.path.push({ x: e.clientX, y: e.clientY });
-    // Keep path manageable
-    if (this.path.length > 50) this.path.shift();
+    const now = performance.now();
+    this.path.push({ x: e.clientX, y: e.clientY, time: now });
+    if (this.path.length > 60) this.path.shift();
   }
 
   onPointerUp(e) {
     if (!this.isTracking) return;
     this.isTracking = false;
+
+    const endX = e.clientX;
+    const endY = e.clientY;
     const endTime = performance.now();
-    const dt = (endTime - this.startTime) / 1000;
 
-    // Calculate release velocity from last few points
-    const recentPoints = this.path.slice(-5);
-    if (recentPoints.length < 2) return;
+    const dy = this.startY - endY; // Upward positive
+    const dx = endX - this.startX;  // Right positive
+    const dtSeconds = Math.max(0.04, (endTime - this.startTime) / 1000);
 
-    const last = recentPoints[recentPoints.length - 1];
-    const first = recentPoints[0];
-    const dx = last.x - first.x;
-    const dy = last.y - first.y;
-    const recentDt = dt * (recentPoints.length / this.path.length);
-
-    this.lastSwipe = {
-      startX: this.startPos.x,
-      startY: this.startPos.y,
-      endX: last.x,
-      endY: last.y,
-      dx: dx,
-      dy: dy,
-      duration: Math.max(recentDt, 0.05),
-      velocityX: dx / Math.max(recentDt, 0.05),
-      velocityY: dy / Math.max(recentDt, 0.05),
-      totalDistance: this.calculatePathLength(),
-      curve: this.calculateCurve(),
-    };
-  }
-
-  calculatePathLength() {
-    let length = 0;
-    for (let i = 1; i < this.path.length; i++) {
-      const dx = this.path[i].x - this.path[i - 1].x;
-      const dy = this.path[i].y - this.path[i - 1].y;
-      length += Math.sqrt(dx * dx + dy * dy);
+    // Require upward screen swipe (dy > 30px)
+    if (dy < MIN_SWIPE_PX) {
+      this.path = [];
+      return;
     }
-    return length;
+
+    const screenW = window.innerWidth;
+    const screenH = window.innerHeight;
+
+    // 1. Vertical speed & length -> Forward speed (vz: -16 to -27 m/s)
+    const swipeSpeedPx = dy / dtSeconds;
+    const normLen = Math.min(1.0, dy / (screenH * 0.45));
+    const normSpeed = Math.min(1.0, Math.max(0, (swipeSpeedPx - 150) / 1600));
+    const powerFactor = Math.min(1.0, Math.max(0, normLen * 0.5 + normSpeed * 0.5));
+
+    const vz = THREE.MathUtils.lerp(VZ_MIN, VZ_MAX, powerFactor);
+
+    // 2. Loft (vy: 3.5 to 8.8 m/s)
+    const loftFactor = Math.min(1.0, normLen * 0.75 + normSpeed * 0.35);
+    const vy = THREE.MathUtils.lerp(VY_MIN, VY_MAX, loftFactor);
+
+    // 3. Horizontal swipe direction -> vx (-6.5 to +6.5 m/s)
+    const normDx = Math.max(-1.0, Math.min(1.0, dx / (screenW * 0.32)));
+    const vx = normDx * VX_MAX;
+
+    // 4. Mid-swipe lateral deviation -> spin omegaY (-10 to +10 rad/s)
+    const omegaY = this.calculateSpin(this.startX, this.startY, endX, endY);
+
+    this.lastProcessedSwipe = {
+      vx,
+      vy,
+      vz,
+      omegaY,
+      power: powerFactor,
+      curve: omegaY / OMEGA_MAX
+    };
+
+    this.path = [];
   }
 
-  calculateCurve() {
-    // Calculate lateral curvature from the swipe path
+  calculateSpin(startX, startY, endX, endY) {
     if (this.path.length < 3) return 0;
 
-    const start = this.path[0];
-    const end = this.path[this.path.length - 1];
-    const midIdx = Math.floor(this.path.length / 2);
-    const mid = this.path[midIdx];
+    const lineDx = endX - startX;
+    const lineDy = endY - startY;
+    const lineLen = Math.hypot(lineDx, lineDy);
+    if (lineLen < 20) return 0;
 
-    // Distance from midpoint to the straight line
-    const lineDx = end.x - start.x;
-    const lineDy = end.y - start.y;
-    const lineLen = Math.sqrt(lineDx * lineDx + lineDy * lineDy);
-    if (lineLen < 10) return 0;
+    let maxDeviation = 0;
+    for (let i = 1; i < this.path.length - 1; i++) {
+      const p = this.path[i];
+      // Signed perpendicular distance from line
+      const cross = (p.x - startX) * lineDy - (p.y - startY) * lineDx;
+      const dist = cross / lineLen;
+      if (Math.abs(dist) > Math.abs(maxDeviation)) {
+        maxDeviation = dist;
+      }
+    }
 
-    // Cross product for signed distance
-    const cross = (mid.x - start.x) * lineDy - (mid.y - start.y) * lineDx;
-    return cross / lineLen;
+    // Swiping bulging right (dist > 0) creates rightward spin, curling ball left
+    const normDev = Math.max(-1.0, Math.min(1.0, -maxDeviation / 45.0));
+    return normDev * OMEGA_MAX;
   }
 
-  getLastSwipe() {
-    const swipe = this.lastSwipe;
-    this.lastSwipe = null;
-    return swipe;
+  consumeSwipe() {
+    const s = this.lastProcessedSwipe;
+    this.lastProcessedSwipe = null;
+    return s;
   }
 
   getActivePath() {
@@ -119,275 +158,286 @@ export class SwipeTracker {
 
   destroy() {
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
-    this.canvas.removeEventListener('pointermove', this.onPointerMove);
-    this.canvas.removeEventListener('pointerup', this.onPointerUp);
-    this.canvas.removeEventListener('pointercancel', this.onPointerUp);
+    window.removeEventListener('pointermove', this.onPointerMove);
+    window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('pointercancel', this.onPointerUp);
   }
 }
 
-// === BALL PHYSICS STATE ===
-export class BallPhysics {
+// === BALL PHYSICS ENGINE ===
+export class BallSimulation {
   constructor() {
-    this.position = new THREE.Vector3(0, BALL_RADIUS, 11);
+    this.position = new THREE.Vector3(BALL_START.x, BALL_START.y, BALL_START.z);
     this.velocity = new THREE.Vector3(0, 0, 0);
-    this.angularVelocity = new THREE.Vector3(0, 0, 0); // spin
+    this.omegaY = 0; // Magnus spin rad/s
+
     this.isFlying = false;
-    this.hasLanded = false;
-    this.hitPost = false;
-    this.hitKeeper = false;
-    this.isGoal = false;
-    this.time = 0;
+    this.isInNet = false;
+    this.hasHitPost = false;
+    this.isSaved = false;
+    this.outcomeTriggered = false;
+    this.flightTime = 0;
   }
 
-  shoot(power, aimX, aimY, curve) {
-    // power: 0-1
-    // aimX: -1 to 1 (horizontal aim)
-    // aimY: 0 to 1 (vertical aim)
-    // curve: -1 to 1 (lateral spin)
-
-    const speed = 15 + power * 25; // 15-40 m/s
-    const angleH = aimX * 0.5; // horizontal angle in radians
-    const angleV = 0.1 + aimY * 0.35; // vertical angle
-
-    this.velocity.set(
-      Math.sin(angleH) * speed,
-      Math.sin(angleV) * speed * 0.7,
-      -Math.cos(angleH) * Math.cos(angleV) * speed
-    );
-
-    // Apply Magnus effect spin
-    this.angularVelocity.set(
-      curve * 15, // side spin (creates lateral curve)
-      curve * 5,  // top spin component
-      0
-    );
+  launch(vx, vy, vz, omegaY) {
+    this.position.set(BALL_START.x, BALL_START.y, BALL_START.z);
+    this.velocity.set(vx, vy, vz);
+    this.omegaY = omegaY;
 
     this.isFlying = true;
-    this.hasLanded = false;
-    this.hitPost = false;
-    this.hitKeeper = false;
-    this.isGoal = false;
-    this.time = 0;
-  }
-
-  update(dt) {
-    if (!this.isFlying || this.hasLanded) return;
-
-    this.time += dt;
-
-    // Apply gravity
-    this.velocity.y += GRAVITY * dt;
-
-    // Apply air resistance
-    const speed = this.velocity.length();
-    if (speed > 0) {
-      const dragForce = this.velocity.clone().normalize().multiplyScalar(-AIR_RESISTANCE * speed * speed);
-      this.velocity.add(dragForce.multiplyScalar(dt));
-    }
-
-    // Apply Magnus force: F = C * (ω × v)
-    if (this.angularVelocity.length() > 0.1) {
-      const magnusForce = new THREE.Vector3();
-      magnusForce.crossVectors(this.angularVelocity, this.velocity);
-      magnusForce.multiplyScalar(MAGNUS_COEFFICIENT * speed);
-      this.velocity.add(magnusForce.multiplyScalar(dt * 60));
-
-      // Spin decay
-      this.angularVelocity.multiplyScalar(0.995);
-    }
-
-    // Update position
-    this.position.add(this.velocity.clone().multiplyScalar(dt));
-
-    // Ground collision
-    if (this.position.y < BALL_RADIUS) {
-      this.position.y = BALL_RADIUS;
-      if (this.velocity.y < -1) {
-        this.velocity.y = -this.velocity.y * RESTITUTION;
-        this.velocity.x *= GROUND_FRICTION;
-        this.velocity.z *= GROUND_FRICTION;
-      } else {
-        this.velocity.y = 0;
-        // Rolling friction
-        this.velocity.x *= 0.98;
-        this.velocity.z *= 0.98;
-
-        if (this.velocity.length() < 0.5) {
-          this.hasLanded = true;
-        }
-      }
-    }
-  }
-
-  // Check collision with cylindrical post/crossbar
-  checkPostCollision(postStart, postEnd, postRadius) {
-    const ballPos = this.position;
-    const effectiveRadius = postRadius + BALL_RADIUS;
-
-    // Find closest point on cylinder (segment) to ball
-    const segDir = new THREE.Vector3().subVectors(postEnd, postStart);
-    const segLen = segDir.length();
-    segDir.normalize();
-
-    const toBall = new THREE.Vector3().subVectors(ballPos, postStart);
-    let t = toBall.dot(segDir);
-    t = Math.max(0, Math.min(segLen, t));
-
-    const closestPoint = postStart.clone().add(segDir.clone().multiplyScalar(t));
-    const dist = ballPos.distanceTo(closestPoint);
-
-    if (dist < effectiveRadius) {
-      // Collision! Calculate reflection
-      const normal = new THREE.Vector3().subVectors(ballPos, closestPoint).normalize();
-
-      // Reflect velocity
-      const dot = this.velocity.dot(normal);
-      this.velocity.sub(normal.multiplyScalar(2 * dot));
-      this.velocity.multiplyScalar(0.6); // energy loss
-
-      // Push ball out of post
-      const overlap = effectiveRadius - dist;
-      this.position.add(normal.clone().multiplyScalar(overlap + 0.01));
-
-      return true;
-    }
-    return false;
-  }
-
-  // Check collision with keeper (simplified box)
-  checkKeeperCollision(keeperBounds) {
-    const ballPos = this.position;
-
-    const boxes = [keeperBounds.body, keeperBounds.leftHand, keeperBounds.rightHand];
-
-    for (const box of boxes) {
-      const dx = Math.abs(ballPos.x - box.center.x);
-      const dy = Math.abs(ballPos.y - box.center.y);
-      const dz = Math.abs(ballPos.z - box.center.z);
-
-      const halfX = box.size.x / 2 + BALL_RADIUS;
-      const halfY = box.size.y / 2 + BALL_RADIUS;
-      const halfZ = box.size.z / 2 + BALL_RADIUS;
-
-      if (dx < halfX && dy < halfY && dz < halfZ) {
-        // Collision - reflect outward from keeper center
-        const normal = new THREE.Vector3().subVectors(ballPos, box.center).normalize();
-        const dot = this.velocity.dot(normal);
-        if (dot < 0) {
-          this.velocity.sub(normal.multiplyScalar(2 * dot));
-          this.velocity.multiplyScalar(0.4);
-        } else {
-          // Ball is deflected
-          this.velocity.multiplyScalar(0.3);
-          this.velocity.add(normal.multiplyScalar(3));
-        }
-
-        // Push ball out
-        this.position.add(normal.multiplyScalar(0.1));
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Check if ball crossed goal line between posts
-  checkGoal(goalWidth, goalHeight) {
-    if (this.position.z <= 0.2 && this.position.z >= -0.5) {
-      if (Math.abs(this.position.x) < goalWidth / 2 - BALL_RADIUS &&
-          this.position.y > 0 &&
-          this.position.y < goalHeight - BALL_RADIUS * 0.5) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Check if ball went wide or over
-  checkMissed(goalWidth, goalHeight) {
-    if (this.position.z <= 0.5) {
-      if (Math.abs(this.position.x) > goalWidth / 2 + 1) return 'wide';
-      if (this.position.y > goalHeight + 1) return 'over';
-      if (this.position.y < 0.1 && this.velocity.length() < 2) return 'saved_low';
-    }
-    // Ball stopped before reaching goal
-    if (this.position.z > 2 && this.velocity.length() < 1 && this.time > 1) return 'weak';
-    return null;
+    this.isInNet = false;
+    this.hasHitPost = false;
+    this.isSaved = false;
+    this.outcomeTriggered = false;
+    this.flightTime = 0;
   }
 
   reset() {
-    this.position.set(0, BALL_RADIUS, 11);
+    this.position.set(BALL_START.x, BALL_START.y, BALL_START.z);
     this.velocity.set(0, 0, 0);
-    this.angularVelocity.set(0, 0, 0);
+    this.omegaY = 0;
     this.isFlying = false;
-    this.hasLanded = false;
-    this.hitPost = false;
-    this.hitKeeper = false;
-    this.isGoal = false;
-    this.time = 0;
-  }
-}
-
-// === AI SHOOTER ===
-export class AIStriker {
-  constructor(difficulty = 0.5) {
-    this.difficulty = difficulty; // 0-1
+    this.isInNet = false;
+    this.hasHitPost = false;
+    this.isSaved = false;
+    this.outcomeTriggered = false;
+    this.flightTime = 0;
   }
 
-  getShot() {
-    // AI generates a shot based on difficulty
-    const accuracy = 0.3 + this.difficulty * 0.5; // 0.3 to 0.8
-    const power = 0.5 + this.random() * 0.4;
+  // Run sub-stepped physics frame
+  step(rawDelta, postColliders, keeperColliders, onEvent) {
+    if (!this.isFlying) return;
 
-    // Aim towards a corner based on difficulty
-    let aimX, aimY;
-    if (this.random() < accuracy) {
-      // Good shot - towards corner
-      aimX = (this.random() > 0.5 ? 1 : -1) * (0.5 + this.random() * 0.4);
-      aimY = this.random() > 0.4 ? 0.6 + this.random() * 0.3 : this.random() * 0.4;
-    } else {
-      // Less accurate
-      aimX = (this.random() - 0.5) * 1.2;
-      aimY = this.random() * 0.7;
+    // Fixed timestep clamp
+    const dt = Math.min(rawDelta, MAX_DT);
+    const subDt = dt / SUB_STEPS;
+
+    for (let s = 0; s < SUB_STEPS; s++) {
+      if (!this.isFlying) break;
+      this.flightTime += subDt;
+
+      // 1. Apply Gravity
+      this.velocity.y -= GRAVITY * subDt;
+
+      // 2. Apply Air Drag
+      this.velocity.multiplyScalar(Math.max(0, 1.0 - AIR_DRAG * subDt));
+
+      // 3. Apply Magnus Curve Force (ax = omegaY * vz * 0.045)
+      if (Math.abs(this.omegaY) > 0.05 && !this.isInNet) {
+        const ax = this.omegaY * this.velocity.z * MAGNUS_FACTOR;
+        this.velocity.x += ax * subDt;
+        // Gradual spin dampening
+        this.omegaY *= Math.max(0, 1.0 - 0.15 * subDt);
+      }
+
+      // 4. Update Position
+      this.position.addScaledVector(this.velocity, subDt);
+
+      // 5. Decelerate if inside net
+      if (this.isInNet) {
+        this.velocity.multiplyScalar(0.85);
+        if (this.position.z < NET_DEPTH_CLAMP) {
+          this.position.z = NET_DEPTH_CLAMP;
+          this.velocity.z = 0;
+        }
+      }
+
+      // 6. Ground Collision (y = 0)
+      if (this.position.y < BALL_RADIUS) {
+        this.position.y = BALL_RADIUS;
+        if (this.velocity.y < -1.0) {
+          this.velocity.y = -this.velocity.y * 0.45; // Bounce
+          this.velocity.x *= 0.85;
+          this.velocity.z *= 0.85;
+        } else {
+          this.velocity.y = 0;
+          this.velocity.x *= 0.94;
+          this.velocity.z *= 0.94;
+        }
+      }
+
+      // 7. Check Collisions & Outcomes (Sub-step accuracy avoids tunneling)
+      this.checkCollisionsAndOutcomes(postColliders, keeperColliders, onEvent);
+    }
+  }
+
+  checkCollisionsAndOutcomes(postColliders, keeperColliders, onEvent) {
+    // A. Check Post / Crossbar Hit (Segment distance check at z = 0)
+    if (!this.isInNet && !this.isSaved && Math.abs(this.position.z) < 0.6) {
+      this.checkPostCollisions(postColliders, onEvent);
     }
 
-    // Some curve
-    const curve = (this.random() - 0.5) * this.difficulty * 0.8;
+    // B. Check Goalkeeper Save (when z is between 0.6 and -0.1)
+    if (!this.isInNet && !this.isSaved && !this.outcomeTriggered) {
+      if (this.position.z <= KEEPER_SAVE_Z_MAX && this.position.z >= KEEPER_SAVE_Z_MIN) {
+        this.checkKeeperSaves(keeperColliders, onEvent);
+      }
+    }
 
-    return { power, aimX, aimY, curve };
+    // C. Check Goal Scored (Ball crosses z <= 0 with |x| < 3.55 and y < 2.34 without being saved)
+    if (!this.outcomeTriggered && !this.isSaved && this.position.z <= 0.0) {
+      if (Math.abs(this.position.x) < GOAL_INNER_X &&
+          this.position.y < GOAL_INNER_Y &&
+          this.position.y >= BALL_RADIUS * 0.5) {
+        this.isInNet = true;
+        this.outcomeTriggered = true;
+        if (onEvent) onEvent('GOAL', this.position.clone());
+        return;
+      }
+    }
+
+    // D. Check Miss (Ball wide, over bar, or stopped before goal)
+    if (!this.outcomeTriggered && !this.isInNet && !this.isSaved) {
+      if (this.position.z < MISS_Z_LIMIT) {
+        this.outcomeTriggered = true;
+        this.isFlying = false;
+        if (onEvent) onEvent('MISS', { reason: 'wide_or_over' });
+        return;
+      }
+
+      // Ball stopped dead before goal
+      if (this.position.z > 0.5 && this.velocity.length() < 0.35 && this.flightTime > 1.2) {
+        this.outcomeTriggered = true;
+        this.isFlying = false;
+        if (onEvent) onEvent('MISS', { reason: 'stopped' });
+        return;
+      }
+    }
   }
 
-  random() {
-    return Math.random();
+  checkPostCollisions(postColliders, onEvent) {
+    if (!postColliders) return;
+
+    const posts = [postColliders.leftPost, postColliders.rightPost, postColliders.crossbar];
+
+    for (const post of posts) {
+      const segDir = new THREE.Vector3().subVectors(post.end, post.start);
+      const segLen = segDir.length();
+      segDir.normalize();
+
+      const toBall = new THREE.Vector3().subVectors(this.position, post.start);
+      const t = Math.max(0, Math.min(segLen, toBall.dot(segDir)));
+      const closestPoint = post.start.clone().addScaledVector(segDir, t);
+
+      const dist = this.position.distanceTo(closestPoint);
+      if (dist < POST_COLLISION_DIST) {
+        // Post hit!
+        this.hasHitPost = true;
+        const normal = new THREE.Vector3().subVectors(this.position, closestPoint).normalize();
+
+        // Outward reflection with damping
+        const dot = this.velocity.dot(normal);
+        if (dot < 0) {
+          this.velocity.subScaledVector(normal, 2 * dot);
+          this.velocity.multiplyScalar(0.55);
+        }
+
+        // Push ball out of cylinder surface
+        const overlap = POST_COLLISION_DIST - dist;
+        this.position.addScaledVector(normal, overlap + 0.02);
+
+        if (onEvent) onEvent('POST_HIT', closestPoint);
+        break;
+      }
+    }
+  }
+
+  checkKeeperSaves(keeperColliders, onEvent) {
+    if (!keeperColliders || keeperColliders.length === 0) return;
+
+    for (const col of keeperColliders) {
+      const dist = this.position.distanceTo(col.center);
+      const threshold = BALL_RADIUS + col.radius;
+
+      if (dist < threshold) {
+        // SAVED! Deflect ball away
+        this.isSaved = true;
+        this.outcomeTriggered = true;
+
+        const normal = new THREE.Vector3().subVectors(this.position, col.center).normalize();
+        normal.z = Math.max(0.4, normal.z); // Deflect forward back towards pitch
+
+        this.velocity.copy(normal.multiplyScalar(6.5));
+        this.velocity.y = Math.max(2.0, this.velocity.y);
+
+        if (onEvent) onEvent('SAVED', col.center);
+        break;
+      }
+    }
   }
 }
 
-// === AI KEEPER ===
-export class AIKeeper {
+// === AI STRIKER LOGIC ===
+export class AIStriker {
   constructor(difficulty = 0.5) {
     this.difficulty = difficulty;
   }
 
-  getDiveDirection(shotAimX) {
-    // Based on difficulty, keeper guesses correctly more often
-    const guessAccuracy = 0.2 + this.difficulty * 0.5;
+  generateShot() {
+    // Pick one of the 6 zones with intelligent weighting
+    const targetZone = GOAL_ZONES[Math.floor(Math.random() * GOAL_ZONES.length)];
 
-    let direction;
-    if (Math.random() < guessAccuracy) {
-      // Correct guess
-      if (shotAimX < -0.2) direction = 'left';
-      else if (shotAimX > 0.2) direction = 'right';
-      else direction = 'center';
+    // Target coordinates around the zone
+    const jitterX = (Math.random() - 0.5) * 0.6;
+    const jitterY = (Math.random() - 0.5) * 0.4;
+    const targetX = targetZone.x + jitterX;
+    const targetY = Math.max(0.3, Math.min(2.2, targetZone.y + jitterY));
+
+    // Distance to goal line is 11.0m
+    const distanceZ = 11.0;
+    const speedFactor = 0.55 + this.difficulty * 0.35 + Math.random() * 0.1;
+    const vz = THREE.MathUtils.lerp(VZ_MIN, VZ_MAX, speedFactor); // e.g. -20 to -25 m/s
+
+    // Time to reach goal plane: t = distance / |vz|
+    const t = distanceZ / Math.abs(vz);
+
+    // Required vx to land at targetX
+    const vx = targetX / t;
+
+    // Required vy taking gravity into account: targetY = 0.22 + vy * t - 0.5 * g * t^2
+    const vy = (targetY - 0.22 + 0.5 * GRAVITY * t * t) / t;
+
+    // Lateral spin
+    const omegaY = (Math.random() - 0.5) * 8.0 * this.difficulty;
+
+    return {
+      vx,
+      vy,
+      vz,
+      omegaY,
+      targetZoneId: targetZone.id
+    };
+  }
+}
+
+// === AI GOALKEEPER LOGIC ===
+export class AIKeeperDecision {
+  constructor(difficulty = 0.5) {
+    this.difficulty = difficulty;
+  }
+
+  chooseDiveZone(shotVx, shotVy, shotOmegaY) {
+    // Predict where the shot is heading
+    const isHigh = shotVy > 5.5;
+    let col = 1; // Center
+    if (shotVx < -1.8) col = 0; // Left
+    else if (shotVx > 1.8) col = 2; // Right
+
+    let bestZone = isHigh ? col : col + 3;
+
+    // Difficulty probability check: does AI guess correctly?
+    const correctGuessProb = 0.35 + this.difficulty * 0.45;
+    if (Math.random() < correctGuessProb) {
+      return bestZone;
     } else {
-      // Wrong guess
-      const choices = ['left', 'right', 'center'];
-      direction = choices[Math.floor(Math.random() * choices.length)];
+      // Wrong guess or late dive
+      const randomZone = Math.floor(Math.random() * 6);
+      return randomZone;
     }
-
-    return direction;
   }
 
   getReactionDelay() {
-    // Higher difficulty = shorter delay
-    return 0.15 + (1 - this.difficulty) * 0.25;
+    // 0.12s to 0.35s delay based on difficulty
+    return THREE.MathUtils.lerp(0.32, 0.14, this.difficulty);
   }
 }

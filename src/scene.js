@@ -1,248 +1,311 @@
-// src/scene.js - Stadium, Pitch, Lights setup
+// src/scene.js - Stadium, Crisp Lighting, Procedural Pitch & Stands
 
 import * as THREE from 'three';
+import { COORDINATES } from './constants.js';
 
-// === PROCEDURAL PITCH TEXTURE ===
+// === PROCEDURAL HIGH-RES PITCH TEXTURE (1024x1024) ===
 function createPitchTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
   canvas.height = 1024;
   const ctx = canvas.getContext('2d');
 
-  // Base green with stripes
-  const stripeWidth = 64;
-  for (let i = 0; i < canvas.width / stripeWidth; i++) {
-    ctx.fillStyle = i % 2 === 0 ? '#2d7a3a' : '#348a42';
-    ctx.fillRect(i * stripeWidth, 0, stripeWidth, canvas.height);
+  // Alternating mowed grass stripes (#2e7d32 and #388e3c)
+  const numStripes = 16;
+  const stripeH = canvas.height / numStripes;
+  for (let i = 0; i < numStripes; i++) {
+    ctx.fillStyle = i % 2 === 0 ? '#2e7d32' : '#388e3c';
+    ctx.fillRect(0, i * stripeH, canvas.width, stripeH);
   }
 
-  // Penalty box lines
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-  ctx.lineWidth = 5;
+  // Crisp white field markings (lineWidth = 6)
+  ctx.strokeStyle = '#ffffff';
+  ctx.fillStyle = '#ffffff';
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
 
-  // Penalty area (outer box)
-  const boxW = 400;
-  const boxH = 180;
-  const boxX = (canvas.width - boxW) / 2;
-  const boxY = 0;
-  ctx.strokeRect(boxX, boxY, boxW, boxH);
+  // Coordinate mapping for 54m (W) x 42m (L) pitch plane
+  // z runs from -6m (y=0) to +36m (y=1024)
+  // z = 0m (Goal line) is at y = (6 / 42) * 1024 = 146.3 px
+  const goalLineY = 146.3;
 
-  // Goal area (6-yard box)
-  const gAreaW = 180;
-  const gAreaH = 70;
-  const gAreaX = (canvas.width - gAreaW) / 2;
-  ctx.strokeRect(gAreaX, boxY, gAreaW, gAreaH);
+  // z = 11m (Penalty Spot) is at y = (17 / 42) * 1024 = 414.5 px
+  const penaltySpotY = 414.5;
+  const centerX = 512;
 
-  // Penalty spot
-  ctx.fillStyle = 'rgba(255, 255, 255, 1)';
+  // 1. Goal Line
   ctx.beginPath();
-  ctx.arc(canvas.width / 2, 120 / 180 * boxH + boxY, 7, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Penalty arc
-  ctx.beginPath();
-  ctx.arc(canvas.width / 2, 120 / 180 * boxH + boxY, 70, 0.3 * Math.PI, 0.7 * Math.PI);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-  ctx.lineWidth = 4;
+  ctx.moveTo(80, goalLineY);
+  ctx.lineTo(canvas.width - 80, goalLineY);
   ctx.stroke();
 
-  // Goal line
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-  ctx.lineWidth = 6;
+  // 2. Penalty Area (18-yard box: 40.3m wide x 16.5m deep)
+  // 40.3 / 54 * 1024 = 764 px wide; 16.5 / 42 * 1024 = 402 px deep
+  const pBoxW = 764;
+  const pBoxH = 402;
+  const pBoxX = (canvas.width - pBoxW) / 2;
+  ctx.strokeRect(pBoxX, goalLineY, pBoxW, pBoxH);
+
+  // 3. Goal Area (6-yard box: 18.3m wide x 5.5m deep)
+  // 18.3 / 54 * 1024 = 347 px wide; 5.5 / 42 * 1024 = 134 px deep
+  const gBoxW = 347;
+  const gBoxH = 134;
+  const gBoxX = (canvas.width - gBoxW) / 2;
+  ctx.strokeRect(gBoxX, goalLineY, gBoxW, gBoxH);
+
+  // 4. Penalty Spot
   ctx.beginPath();
-  ctx.moveTo(0, 3);
-  ctx.lineTo(canvas.width, 3);
+  ctx.arc(centerX, penaltySpotY, 7, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 5. Penalty Arc (Radius 9.15m: 9.15 / 42 * 1024 = 223 px)
+  ctx.beginPath();
+  ctx.arc(centerX, penaltySpotY, 223, 0.31 * Math.PI, 0.69 * Math.PI);
   ctx.stroke();
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(1, 1);
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.anisotropy = 16;
   return texture;
 }
 
-// === STADIUM STANDS (clean solid architecture, no floating particles) ===
+// === TIERED SEMI-CIRCULAR STADIUM STANDS (z < -18) ===
 function createStadiumStands(scene) {
-  // Dark slate material for clean stands
-  const standMaterial = new THREE.MeshStandardMaterial({
-    color: 0x2a2d3e,
+  const standsGroup = new THREE.Group();
+  standsGroup.name = 'StadiumStands';
+
+  const tierMatDark = new THREE.MeshStandardMaterial({
+    color: 0x161c28,
     roughness: 0.85,
     metalness: 0.15
   });
 
-  const standTopMaterial = new THREE.MeshStandardMaterial({
-    color: 0x3a3d4e,
-    roughness: 0.8,
-    metalness: 0.1
+  const tierMatLight = new THREE.MeshStandardMaterial({
+    color: 0x1f2838,
+    roughness: 0.80,
+    metalness: 0.15
   });
 
-  // Create tiered solid bleachers around the pitch
-  const standConfigs = [
-    // Behind goal (far side - main stand)
-    { x: 0, z: -30, rotY: 0, width: 50, tiers: 6, tierHeight: 2.5, tierDepth: 3 },
-    // Left side
-    { x: -22, z: 0, rotY: Math.PI / 2, width: 60, tiers: 5, tierHeight: 2.5, tierDepth: 3 },
-    // Right side
-    { x: 22, z: 0, rotY: -Math.PI / 2, width: 60, tiers: 5, tierHeight: 2.5, tierDepth: 3 },
-    // Near side (behind camera) - lower
-    { x: 0, z: 28, rotY: Math.PI, width: 50, tiers: 3, tierHeight: 2, tierDepth: 3 },
+  const seatColor1 = 0x1565c0; // Stadium blue seats
+  const seatColor2 = 0x0d47a1;
+  const seatMat1 = new THREE.MeshStandardMaterial({ color: seatColor1, roughness: 0.6 });
+  const seatMat2 = new THREE.MeshStandardMaterial({ color: seatColor2, roughness: 0.6 });
+
+  // Curved tiered bleachers behind goal (radius 24m to 38m, angle from -140 deg to -40 deg)
+  const numTiers = 8;
+  const arcSegments = 24;
+  const startAngle = Math.PI * 1.15;
+  const endAngle = Math.PI * 1.85;
+  const angleStep = (endAngle - startAngle) / arcSegments;
+
+  for (let tier = 0; tier < numTiers; tier++) {
+    const tierRadius = 24 + tier * 1.7;
+    const tierY = tier * 1.1;
+    const tierHeight = 1.1;
+    const mat = tier % 2 === 0 ? tierMatDark : tierMatLight;
+
+    for (let s = 0; s < arcSegments; s++) {
+      const theta1 = startAngle + s * angleStep;
+      const theta2 = startAngle + (s + 1) * angleStep;
+      const midTheta = (theta1 + theta2) / 2;
+
+      const x = Math.cos(midTheta) * tierRadius;
+      const z = Math.sin(midTheta) * tierRadius;
+
+      // Segment box
+      const segmentWidth = 2 * tierRadius * Math.sin(angleStep / 2) * 1.02;
+      const geo = new THREE.BoxGeometry(segmentWidth, tierHeight, 1.8);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, tierY + tierHeight / 2, z);
+      mesh.rotation.y = -midTheta + Math.PI / 2;
+      mesh.receiveShadow = true;
+      standsGroup.add(mesh);
+
+      // Seats strip on top
+      if (tier > 0) {
+        const seatGeo = new THREE.BoxGeometry(segmentWidth * 0.96, 0.25, 0.6);
+        const seatMesh = new THREE.Mesh(seatGeo, s % 2 === 0 ? seatMat1 : seatMat2);
+        seatMesh.position.set(x, tierY + tierHeight + 0.12, z);
+        seatMesh.rotation.y = -midTheta + Math.PI / 2;
+        standsGroup.add(seatMesh);
+      }
+    }
+  }
+
+  // Curved Grandstand Roof Canopy
+  const roofRadius = 32;
+  const roofHeight = numTiers * 1.1 + 4.5;
+  for (let s = 0; s < arcSegments; s++) {
+    const theta1 = startAngle + s * angleStep;
+    const theta2 = startAngle + (s + 1) * angleStep;
+    const midTheta = (theta1 + theta2) / 2;
+    const x = Math.cos(midTheta) * roofRadius;
+    const z = Math.sin(midTheta) * roofRadius;
+    const segmentWidth = 2 * roofRadius * Math.sin(angleStep / 2) * 1.04;
+
+    const roofGeo = new THREE.BoxGeometry(segmentWidth, 0.4, 16);
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: 0x222a38,
+      metalness: 0.5,
+      roughness: 0.4
+    });
+    const roofSegment = new THREE.Mesh(roofGeo, roofMat);
+    roofSegment.position.set(x * 0.9, roofHeight, z * 0.9);
+    roofSegment.rotation.y = -midTheta + Math.PI / 2;
+    roofSegment.rotation.x = -0.15; // Sloped down towards pitch
+    standsGroup.add(roofSegment);
+  }
+
+  scene.add(standsGroup);
+}
+
+// === 4 FLOODLIGHT TOWERS ===
+function createFloodlightTowers(scene) {
+  const towers = [
+    { x: -22, z: -14 },
+    { x: 22,  z: -14 },
+    { x: -22, z: 24 },
+    { x: 22,  z: 24 }
   ];
 
-  standConfigs.forEach(cfg => {
-    const standGroup = new THREE.Group();
+  const poleMat = new THREE.MeshStandardMaterial({
+    color: 0x37474f,
+    metalness: 0.85,
+    roughness: 0.3
+  });
 
-    for (let tier = 0; tier < cfg.tiers; tier++) {
-      const geo = new THREE.BoxGeometry(cfg.width, cfg.tierHeight, cfg.tierDepth);
-      const mat = tier % 2 === 0 ? standMaterial : standTopMaterial;
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(0, tier * cfg.tierHeight + cfg.tierHeight / 2, -tier * cfg.tierDepth * 0.8);
-      mesh.receiveShadow = true;
-      mesh.castShadow = true;
-      standGroup.add(mesh);
+  const housingMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: 0xffffff,
+    emissiveIntensity: 3.5,
+    roughness: 0.1
+  });
+
+  towers.forEach(t => {
+    const towerGroup = new THREE.Group();
+    const towerH = 22;
+
+    // Main column
+    const poleGeo = new THREE.CylinderGeometry(0.18, 0.32, towerH, 8);
+    const pole = new THREE.Mesh(poleGeo, poleMat);
+    pole.position.set(0, towerH / 2, 0);
+    pole.castShadow = true;
+    towerGroup.add(pole);
+
+    // Cross braces
+    for (let h = 4; h < towerH; h += 4) {
+      const braceGeo = new THREE.BoxGeometry(1.6, 0.12, 1.6);
+      const brace = new THREE.Mesh(braceGeo, poleMat);
+      brace.position.set(0, h, 0);
+      towerGroup.add(brace);
     }
 
-    // Top railing/wall
-    const railingGeo = new THREE.BoxGeometry(cfg.width, 0.8, 0.3);
-    const railingMat = new THREE.MeshStandardMaterial({ color: 0x555566, roughness: 0.6, metalness: 0.3 });
-    const railing = new THREE.Mesh(railingGeo, railingMat);
-    railing.position.set(0, cfg.tiers * cfg.tierHeight + 0.4, -cfg.tiers * cfg.tierDepth * 0.8);
-    standGroup.add(railing);
+    // Light head panel
+    const headGeo = new THREE.BoxGeometry(3.2, 1.8, 0.5);
+    const head = new THREE.Mesh(headGeo, housingMat);
+    head.position.set(0, towerH + 0.9, 0);
+    // Angle light head towards goal line area
+    head.lookAt(new THREE.Vector3(0, 1.5, 5));
+    towerGroup.add(head);
 
-    standGroup.position.set(cfg.x, 0, cfg.z);
-    standGroup.rotation.y = cfg.rotY;
-    scene.add(standGroup);
+    towerGroup.position.set(t.x, 0, t.z);
+    scene.add(towerGroup);
   });
 }
 
-// === FLOODLIGHTS (subtle glowing towers) ===
-function createFloodlights(scene) {
-  const towerConfigs = [
-    { x: -20, z: -15 },
-    { x: 20, z: -15 },
-    { x: -20, z: 22 },
-    { x: 20, z: 22 },
-  ];
-
-  towerConfigs.forEach((pos) => {
-    const towerHeight = 18;
-
-    // Tower pole
-    const poleGeo = new THREE.CylinderGeometry(0.12, 0.18, towerHeight, 8);
-    const poleMat = new THREE.MeshStandardMaterial({
-      color: 0x444444,
-      metalness: 0.9,
-      roughness: 0.2
-    });
-    const pole = new THREE.Mesh(poleGeo, poleMat);
-    pole.position.set(pos.x, towerHeight / 2, pos.z);
-    pole.castShadow = true;
-    scene.add(pole);
-
-    // Light housing (glowing panel)
-    const housingGeo = new THREE.BoxGeometry(2.5, 1.2, 0.3);
-    const housingMat = new THREE.MeshStandardMaterial({
-      color: 0xffffee,
-      emissive: 0xffffcc,
-      emissiveIntensity: 3.0,
-      roughness: 0.3
-    });
-    const housing = new THREE.Mesh(housingGeo, housingMat);
-    housing.position.set(pos.x, towerHeight + 0.6, pos.z);
-    scene.add(housing);
-
-    // Glow sphere (subtle light bloom effect)
-    const glowGeo = new THREE.SphereGeometry(1.5, 16, 16);
-    const glowMat = new THREE.MeshBasicMaterial({
-      color: 0xffffdd,
-      transparent: true,
-      opacity: 0.15
-    });
-    const glow = new THREE.Mesh(glowGeo, glowMat);
-    glow.position.set(pos.x, towerHeight + 0.5, pos.z);
-    scene.add(glow);
-
-    // SpotLight from each tower
-    const spotlight = new THREE.SpotLight(0xfff8e0, 2.5, 70, Math.PI / 3.5, 0.6, 1.2);
-    spotlight.position.set(pos.x, towerHeight, pos.z);
-    spotlight.target.position.set(0, 0, 3);
-    spotlight.castShadow = true;
-    spotlight.shadow.mapSize.set(1024, 1024);
-    spotlight.shadow.camera.near = 5;
-    spotlight.shadow.camera.far = 60;
-    scene.add(spotlight);
-    scene.add(spotlight.target);
-  });
-}
-
-// === MAIN SCENE SETUP ===
+// === MAIN SCENE INITIALIZER ===
 export function createScene() {
   const scene = new THREE.Scene();
 
-  // Night sky - slightly brighter for visibility
-  scene.background = new THREE.Color(0x0f1525);
+  // 1. Background & Fog (Crisp night theme)
+  scene.background = new THREE.Color(0x0a1118);
+  scene.fog = new THREE.FogExp2(0x0a1118, 0.008);
 
-  // Minimal fog - just enough for depth, not blocking visibility
-  scene.fog = new THREE.FogExp2(0x0f1525, 0.006);
-
-  // === MAIN LIGHTING ===
-
-  // Bright hemisphere light (sky white, ground green)
-  const hemiLight = new THREE.HemisphereLight(0xffffff, 0x2e7d32, 1.4);
-  hemiLight.position.set(0, 50, 0);
+  // 2. Bright Hemisphere Lighting
+  const hemiLight = new THREE.HemisphereLight(0xffffff, 0x1b5e20, 1.5);
+  hemiLight.position.set(0, 40, 0);
   scene.add(hemiLight);
 
-  // Main directional light (stadium main flood)
-  const dirLight = new THREE.DirectionalLight(0xfff8e0, 2.2);
-  dirLight.position.set(5, 25, 10);
-  dirLight.target.position.set(0, 0, 3);
-  dirLight.castShadow = true;
-  dirLight.shadow.mapSize.set(2048, 2048);
-  dirLight.shadow.camera.near = 1;
-  dirLight.shadow.camera.far = 60;
-  dirLight.shadow.camera.left = -20;
-  dirLight.shadow.camera.right = 20;
-  dirLight.shadow.camera.top = 20;
-  dirLight.shadow.camera.bottom = -20;
-  dirLight.shadow.bias = -0.001;
-  scene.add(dirLight);
-  scene.add(dirLight.target);
+  // 3. Two Stadium DirectionalLight Floodlights (intensity 2.0, soft shadows)
+  const dirLight1 = new THREE.DirectionalLight(0xffffff, 2.0);
+  dirLight1.position.set(-16, 26, 18);
+  dirLight1.target.position.set(0, 0, 4);
+  dirLight1.castShadow = true;
+  dirLight1.shadow.mapSize.set(2048, 2048);
+  dirLight1.shadow.camera.near = 5;
+  dirLight1.shadow.camera.far = 70;
+  dirLight1.shadow.camera.left = -22;
+  dirLight1.shadow.camera.right = 22;
+  dirLight1.shadow.camera.top = 22;
+  dirLight1.shadow.camera.bottom = -22;
+  dirLight1.shadow.bias = -0.0008;
+  scene.add(dirLight1);
+  scene.add(dirLight1.target);
 
-  // Fill light from opposite side
-  const fillLight = new THREE.DirectionalLight(0xe8e0ff, 0.8);
-  fillLight.position.set(-10, 15, 5);
-  scene.add(fillLight);
+  const dirLight2 = new THREE.DirectionalLight(0xffffff, 2.0);
+  dirLight2.position.set(16, 26, 18);
+  dirLight2.target.position.set(0, 0, 4);
+  dirLight2.castShadow = true;
+  dirLight2.shadow.mapSize.set(2048, 2048);
+  dirLight2.shadow.camera.near = 5;
+  dirLight2.shadow.camera.far = 70;
+  dirLight2.shadow.camera.left = -22;
+  dirLight2.shadow.camera.right = 22;
+  dirLight2.shadow.camera.top = 22;
+  dirLight2.shadow.camera.bottom = -22;
+  dirLight2.shadow.bias = -0.0008;
+  scene.add(dirLight2);
+  scene.add(dirLight2.target);
 
-  // Ground / Pitch
-  const pitchGeo = new THREE.PlaneGeometry(50, 50);
+  // 4. Pitch Geometry: 54m wide x 42m long
+  // Center is at (0, 0, 15), meaning z ranges from -6 to +36
+  const pitchGeo = new THREE.PlaneGeometry(54, 42);
   const pitchMat = new THREE.MeshStandardMaterial({
     map: createPitchTexture(),
-    roughness: 0.75,
-    metalness: 0.0,
+    roughness: 0.85,
+    metalness: 0.05
   });
   const pitch = new THREE.Mesh(pitchGeo, pitchMat);
   pitch.rotation.x = -Math.PI / 2;
-  pitch.position.set(0, 0, 5);
+  pitch.position.set(0, 0, 15);
   pitch.receiveShadow = true;
   scene.add(pitch);
 
-  // Add floodlights (with spotlights)
-  createFloodlights(scene);
+  // 5. Crisp 3D Penalty Spot Disk at exact world (0, 0.008, 11.0)
+  const spotGeo = new THREE.CircleGeometry(0.16, 32);
+  const spotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const penaltySpotMesh = new THREE.Mesh(spotGeo, spotMat);
+  penaltySpotMesh.rotation.x = -Math.PI / 2;
+  penaltySpotMesh.position.set(0, 0.008, 11.0);
+  scene.add(penaltySpotMesh);
 
-  // Add stadium stands (solid architecture, no particles)
-  createStadiumStands(scene);
+  // 6. Crisp 3D Goal Line Strip at exact world z = 0, y = 0.006
+  const goalLineGeo = new THREE.PlaneGeometry(COORDINATES.GOAL_WIDTH + 0.3, 0.12);
+  const goalLineMesh = new THREE.Mesh(goalLineGeo, spotMat);
+  goalLineMesh.rotation.x = -Math.PI / 2;
+  goalLineMesh.position.set(0, 0.006, 0);
+  scene.add(goalLineMesh);
 
-  // Ground plane (surrounding pitch - dark green)
-  const surroundGeo = new THREE.PlaneGeometry(120, 120);
-  const surroundMat = new THREE.MeshStandardMaterial({
-    color: 0x1a4a1a,
+  // 7. Outer Apron / Stadium Surrounding Field
+  const apronGeo = new THREE.PlaneGeometry(140, 120);
+  const apronMat = new THREE.MeshStandardMaterial({
+    color: 0x143318,
     roughness: 0.95,
     metalness: 0.0
   });
-  const surround = new THREE.Mesh(surroundGeo, surroundMat);
-  surround.rotation.x = -Math.PI / 2;
-  surround.position.y = -0.01;
-  surround.receiveShadow = true;
-  scene.add(surround);
+  const apron = new THREE.Mesh(apronGeo, apronMat);
+  apron.rotation.x = -Math.PI / 2;
+  apron.position.set(0, -0.015, 10);
+  apron.receiveShadow = true;
+  scene.add(apron);
+
+  // 8. Stadium Stands in Semi-Circle (z < -18)
+  createStadiumStands(scene);
+
+  // 9. 4 Glowing Floodlight Towers
+  createFloodlightTowers(scene);
 
   return scene;
 }

@@ -1,8 +1,7 @@
-// src/ui.js - HUD & UI Management
+// src/ui.js - HUD, Scoreboard, Aim Trail & UI Controller
 
 export class GameUI {
   constructor() {
-    // Cache DOM elements
     this.playerScoreEl = document.getElementById('player-score');
     this.aiScoreEl = document.getElementById('ai-score');
     this.roundLabelEl = document.getElementById('round-label');
@@ -23,147 +22,193 @@ export class GameUI {
     this.startBtnEl = document.getElementById('start-btn');
     this.replayBtnEl = document.getElementById('replay-btn');
     this.trailCanvas = document.getElementById('trail-canvas');
-    this.trailCtx = this.trailCanvas.getContext('2d');
+    this.trailCtx = this.trailCanvas ? this.trailCanvas.getContext('2d') : null;
 
+    this.zoneButtons = this.zoneSelectorEl ? this.zoneSelectorEl.querySelectorAll('.zone-btn') : [];
+
+    this.messageTimer = null;
     this.resizeTrailCanvas();
     window.addEventListener('resize', () => this.resizeTrailCanvas());
-
-    this.messageTimeout = null;
   }
 
   resizeTrailCanvas() {
+    if (!this.trailCanvas) return;
     this.trailCanvas.width = window.innerWidth;
     this.trailCanvas.height = window.innerHeight;
   }
 
   updateScore(playerScore, aiScore) {
-    this.playerScoreEl.textContent = playerScore;
-    this.aiScoreEl.textContent = aiScore;
+    if (this.playerScoreEl) this.playerScoreEl.textContent = playerScore;
+    if (this.aiScoreEl) this.aiScoreEl.textContent = aiScore;
   }
 
-  updateRound(round, maxRounds = 5) {
-    if (round > maxRounds) {
+  updateRound(round, isSuddenDeath = false) {
+    if (!this.roundLabelEl) return;
+    if (isSuddenDeath) {
       this.roundLabelEl.textContent = `SUDDEN DEATH`;
+      this.roundLabelEl.style.color = '#ff9800';
     } else {
       this.roundLabelEl.textContent = `ROUND ${round}`;
+      this.roundLabelEl.style.color = 'rgba(255, 255, 255, 0.7)';
     }
   }
 
   updateDots(playerResults, aiResults) {
-    const playerDots = this.playerDotsEl.querySelectorAll('.dot');
-    const aiDots = this.aiDotsEl.querySelectorAll('.dot');
+    const playerDots = this.playerDotsEl ? this.playerDotsEl.querySelectorAll('.dot') : [];
+    const aiDots = this.aiDotsEl ? this.aiDotsEl.querySelectorAll('.dot') : [];
 
-    playerResults.forEach((result, i) => {
+    playerResults.forEach((res, i) => {
       if (i < playerDots.length) {
-        playerDots[i].className = 'dot' + (result === 'goal' ? ' goal' : result === 'miss' ? ' miss' : '');
+        playerDots[i].className = `dot ${res}`;
       }
     });
 
-    aiResults.forEach((result, i) => {
+    aiResults.forEach((res, i) => {
       if (i < aiDots.length) {
-        aiDots[i].className = 'dot' + (result === 'goal' ? ' goal' : result === 'miss' ? ' miss' : '');
+        aiDots[i].className = `dot ${res}`;
       }
     });
   }
 
+  resetDots() {
+    const allDots = document.querySelectorAll('.dot');
+    allDots.forEach(d => { d.className = 'dot'; });
+  }
+
   showRole(role) {
+    if (!this.roleIndicatorEl) return;
     this.roleIndicatorEl.classList.remove('hidden');
     if (role === 'shoot') {
-      this.roleTextEl.textContent = 'YOUR TURN: SHOOT';
+      this.roleTextEl.textContent = 'YOUR TURN: SWIPE TO SHOOT';
       this.roleTextEl.style.color = '#4fc3f7';
     } else {
-      this.roleTextEl.textContent = 'YOUR TURN: SAVE';
-      this.roleTextEl.style.color = '#ff8a65';
+      this.roleTextEl.textContent = 'YOUR TURN: CLICK A ZONE TO DIVE';
+      this.roleTextEl.style.color = '#00e5ff';
     }
   }
 
   hideRole() {
-    this.roleIndicatorEl.classList.add('hidden');
+    if (this.roleIndicatorEl) this.roleIndicatorEl.classList.add('hidden');
   }
 
   showPowerMeter(power, curve) {
+    if (!this.powerMeterEl) return;
     this.powerMeterEl.classList.remove('hidden');
-    this.powerFillEl.style.width = `${power * 100}%`;
-    this.curveFillEl.style.width = `${Math.abs(curve) * 100}%`;
+    if (this.powerFillEl) this.powerFillEl.style.width = `${Math.min(100, power * 100)}%`;
+    if (this.curveFillEl) this.curveFillEl.style.width = `${Math.min(100, Math.abs(curve) * 100)}%`;
   }
 
   hidePowerMeter() {
-    this.powerMeterEl.classList.add('hidden');
+    if (this.powerMeterEl) this.powerMeterEl.classList.add('hidden');
   }
 
   showZoneSelector() {
+    if (!this.zoneSelectorEl) return;
     this.zoneSelectorEl.classList.remove('hidden');
+    this.clearZoneSelection();
   }
 
   hideZoneSelector() {
-    this.zoneSelectorEl.classList.add('hidden');
+    if (this.zoneSelectorEl) this.zoneSelectorEl.classList.add('hidden');
   }
 
-  showMessage(text, duration = 1500, color = '#fff') {
-    if (this.messageTimeout) clearTimeout(this.messageTimeout);
+  setZoneSelected(zoneId) {
+    this.zoneButtons.forEach(btn => {
+      if (parseInt(btn.dataset.zone) === zoneId) {
+        btn.classList.add('selected');
+      } else {
+        btn.classList.remove('selected');
+      }
+    });
+  }
+
+  clearZoneSelection() {
+    this.zoneButtons.forEach(btn => btn.classList.remove('selected'));
+  }
+
+  showMessage(text, duration = 1800, color = '#ffffff') {
+    if (!this.messageOverlayEl || !this.messageTextEl) return;
+    if (this.messageTimer) clearTimeout(this.messageTimer);
+
     this.messageOverlayEl.classList.remove('hidden');
     this.messageTextEl.textContent = text;
     this.messageTextEl.style.color = color;
+
+    // Trigger pop CSS animation
     this.messageTextEl.style.animation = 'none';
-    void this.messageTextEl.offsetWidth; // trigger reflow
+    void this.messageTextEl.offsetWidth; // Force reflow
     this.messageTextEl.style.animation = 'messagePop 0.4s ease';
 
-    this.messageTimeout = setTimeout(() => {
+    this.messageTimer = setTimeout(() => {
       this.messageOverlayEl.classList.add('hidden');
     }, duration);
   }
 
   hideMessage() {
-    this.messageOverlayEl.classList.add('hidden');
+    if (this.messageTimer) clearTimeout(this.messageTimer);
+    if (this.messageOverlayEl) this.messageOverlayEl.classList.add('hidden');
   }
 
   showStartScreen() {
-    this.startScreenEl.style.display = 'flex';
+    if (this.startScreenEl) this.startScreenEl.style.display = 'flex';
   }
 
   hideStartScreen() {
-    this.startScreenEl.style.display = 'none';
+    if (this.startScreenEl) this.startScreenEl.style.display = 'none';
   }
 
   showEndScreen(playerScore, aiScore, playerWon) {
+    if (!this.endScreenEl) return;
     this.endScreenEl.classList.remove('hidden');
-    this.endTitleEl.textContent = playerWon ? '🏆 YOU WIN!' : (playerScore === aiScore ? 'DRAW!' : '😢 YOU LOSE');
-    this.endScoreEl.textContent = `${playerScore} - ${aiScore}`;
+    if (this.endTitleEl) {
+      this.endTitleEl.textContent = playerWon ? '🏆 VICTORY!' : (playerScore === aiScore ? '🤝 DRAW MATCH' : '💔 DEFEAT');
+      this.endTitleEl.style.color = playerWon ? '#ffea00' : (playerScore === aiScore ? '#ffffff' : '#ff5252');
+    }
+    if (this.endScoreEl) {
+      this.endScoreEl.textContent = `${playerScore} - ${aiScore}`;
+    }
   }
 
   hideEndScreen() {
-    this.endScreenEl.classList.add('hidden');
+    if (this.endScreenEl) this.endScreenEl.classList.add('hidden');
   }
 
   onStart(callback) {
-    this.startBtnEl.addEventListener('click', callback);
+    if (this.startBtnEl) {
+      this.startBtnEl.addEventListener('click', callback);
+    }
   }
 
   onReplay(callback) {
-    this.replayBtnEl.addEventListener('click', callback);
+    if (this.replayBtnEl) {
+      this.replayBtnEl.addEventListener('click', callback);
+    }
   }
 
   onZoneSelect(callback) {
-    const buttons = this.zoneSelectorEl.querySelectorAll('.zone-btn');
-    buttons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        callback(parseInt(btn.dataset.zone));
+    this.zoneButtons.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const zone = parseInt(btn.dataset.zone);
+        this.setZoneSelected(zone);
+        callback(zone);
       });
     });
   }
 
-  // Draw swipe aim trail on the 2D overlay canvas
+  // Draw 2D glowing swipe aim line on overlay canvas
   drawAimTrail(path, isSwiping) {
+    if (!this.trailCtx || !this.trailCanvas) return;
     const ctx = this.trailCtx;
     ctx.clearRect(0, 0, this.trailCanvas.width, this.trailCanvas.height);
 
     if (!path || path.length < 2 || !isSwiping) return;
 
-    // Draw glowing trail
-    ctx.strokeStyle = '#4fc3f7';
-    ctx.lineWidth = 3;
-    ctx.shadowColor = '#4fc3f7';
-    ctx.shadowBlur = 15;
+    ctx.save();
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 4;
+    ctx.shadowColor = '#00e5ff';
+    ctx.shadowBlur = 16;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -174,26 +219,26 @@ export class GameUI {
     }
     ctx.stroke();
 
-    // Draw arrow at end showing direction
-    if (path.length >= 2) {
-      const last = path[path.length - 1];
-      const prev = path[path.length - 2];
-      const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+    // Direction arrow at pointer tip
+    const last = path[path.length - 1];
+    const prev = path[Math.max(0, path.length - 3)];
+    const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
 
-      ctx.fillStyle = '#4fc3f7';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.moveTo(last.x, last.y);
-      ctx.lineTo(last.x - 15 * Math.cos(angle - 0.4), last.y - 15 * Math.sin(angle - 0.4));
-      ctx.lineTo(last.x - 15 * Math.cos(angle + 0.4), last.y - 15 * Math.sin(angle + 0.4));
-      ctx.closePath();
-      ctx.fill();
-    }
+    ctx.fillStyle = '#ffea00';
+    ctx.shadowColor = '#ffea00';
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(last.x - 18 * Math.cos(angle - 0.45), last.y - 18 * Math.sin(angle - 0.45));
+    ctx.lineTo(last.x - 18 * Math.cos(angle + 0.45), last.y - 18 * Math.sin(angle + 0.45));
+    ctx.closePath();
+    ctx.fill();
 
-    ctx.shadowBlur = 0;
+    ctx.restore();
   }
 
   clearTrail() {
+    if (!this.trailCtx || !this.trailCanvas) return;
     this.trailCtx.clearRect(0, 0, this.trailCanvas.width, this.trailCanvas.height);
   }
 }

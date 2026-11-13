@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Penalty Champions 3D</title>
   <link rel="stylesheet" href="./src/style.css" />
   <script type="importmap">
@@ -18,7 +18,7 @@
   <div id="game-container">
     <canvas id="game-canvas"></canvas>
 
-    <!-- Swipe trail overlay -->
+    <!-- 2D Swipe & Aim Trail Overlay -->
     <canvas id="trail-canvas"></canvas>
 
     <!-- HUD Overlay -->
@@ -45,51 +45,57 @@
         </div>
       </div>
 
-      <!-- Role indicator -->
+      <!-- Role Indicator Banner -->
       <div id="role-indicator" class="hidden">
-        <span id="role-text">YOUR TURN: SHOOT</span>
+        <span id="role-text">YOUR TURN: SWIPE TO SHOOT</span>
       </div>
 
-      <!-- Power / Curve meter -->
+      <!-- Power / Curve Telemetry Meter -->
       <div id="power-meter" class="hidden">
-        <div class="meter-label">POWER</div>
-        <div class="meter-bar"><div class="meter-fill" id="power-fill"></div></div>
-        <div class="meter-label">CURVE</div>
-        <div class="meter-bar"><div class="meter-fill curve-fill" id="curve-fill"></div></div>
-      </div>
-
-      <!-- Zone selector for keeper mode -->
-      <div id="zone-selector" class="hidden">
-        <div class="zone-grid">
-          <button class="zone-btn" data-zone="0">↖</button>
-          <button class="zone-btn" data-zone="1">↑</button>
-          <button class="zone-btn" data-zone="2">↗</button>
-          <button class="zone-btn" data-zone="3">←</button>
-          <button class="zone-btn" data-zone="4">↓</button>
-          <button class="zone-btn" data-zone="5">→</button>
+        <div class="meter-group">
+          <div class="meter-label">SHOT POWER</div>
+          <div class="meter-bar"><div class="meter-fill" id="power-fill"></div></div>
+        </div>
+        <div class="meter-group">
+          <div class="meter-label">MAGNUS CURVE</div>
+          <div class="meter-bar"><div class="meter-fill curve-fill" id="curve-fill"></div></div>
         </div>
       </div>
 
-      <!-- Message overlay -->
+      <!-- Interactive 6 Dive Target Selector (Keeper Mode) -->
+      <div id="zone-selector" class="hidden">
+        <div class="zone-header">TAP GOAL OR SELECT DIVE ZONE</div>
+        <div class="zone-grid">
+          <button class="zone-btn" data-zone="0" title="Top-Left">↖<span class="zone-name">TOP L</span></button>
+          <button class="zone-btn" data-zone="1" title="Top-Center">↑<span class="zone-name">TOP C</span></button>
+          <button class="zone-btn" data-zone="2" title="Top-Right">↗<span class="zone-name">TOP R</span></button>
+          <button class="zone-btn" data-zone="3" title="Bottom-Left">↙<span class="zone-name">BOT L</span></button>
+          <button class="zone-btn" data-zone="4" title="Bottom-Center">↓<span class="zone-name">BOT C</span></button>
+          <button class="zone-btn" data-zone="5" title="Bottom-Right">↘<span class="zone-name">BOT R</span></button>
+        </div>
+      </div>
+
+      <!-- Centered Message Overlay -->
       <div id="message-overlay" class="hidden">
-        <div id="message-text"></div>
+        <div id="message-text">GOAL!</div>
       </div>
     </div>
 
-    <!-- Start Screen -->
+    <!-- Start Match Screen -->
     <div id="start-screen">
       <div class="start-content">
+        <div class="start-badge">CHAMPIONSHIP EDITION</div>
         <h1>⚽ PENALTY<br>CHAMPIONS 3D</h1>
-        <p class="subtitle">Swipe to shoot. Click zones to save.</p>
+        <p class="subtitle">Swipe up to shoot & bend the ball • Tap goal zones to dive & save</p>
         <button id="start-btn">KICK OFF</button>
       </div>
     </div>
 
-    <!-- End Screen / Modal -->
+    <!-- End Match Screen -->
     <div id="end-screen" class="hidden">
       <div class="end-content">
         <h2 id="end-title">MATCH OVER</h2>
-        <div id="end-score"></div>
+        <div id="end-score">0 - 0</div>
         <button id="replay-btn">PLAY AGAIN</button>
       </div>
     </div>
