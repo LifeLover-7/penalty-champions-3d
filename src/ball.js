@@ -8,8 +8,8 @@ function createBallTexture() {
   canvas.height = 512;
   const ctx = canvas.getContext('2d');
 
-  // White base
-  ctx.fillStyle = '#f0f0f0';
+  // Bright white base
+  ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, 512, 512);
 
   // Draw pentagon/hexagon pattern
@@ -25,7 +25,7 @@ function createBallTexture() {
     ctx.closePath();
     ctx.fillStyle = '#1a1a1a';
     ctx.fill();
-    ctx.strokeStyle = '#333';
+    ctx.strokeStyle = '#000000';
     ctx.lineWidth = 2;
     ctx.stroke();
   };
@@ -52,8 +52,8 @@ function createBallTexture() {
   });
 
   // Add hexagonal seam lines
-  ctx.strokeStyle = 'rgba(100, 100, 100, 0.3)';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(50, 50, 50, 0.5)';
+  ctx.lineWidth = 1.5;
   for (let i = 0; i < positions.length; i++) {
     for (let j = i + 1; j < positions.length; j++) {
       const dx = positions[j].x - positions[i].x;
@@ -67,16 +67,6 @@ function createBallTexture() {
       }
     }
   }
-
-  // Add subtle bump map texture
-  const imageData = ctx.getImageData(0, 0, 512, 512);
-  for (let i = 0; i < imageData.data.length; i += 4) {
-    const noise = (Math.random() - 0.5) * 10;
-    imageData.data[i] = Math.max(0, Math.min(255, imageData.data[i] + noise));
-    imageData.data[i + 1] = Math.max(0, Math.min(255, imageData.data[i + 1] + noise));
-    imageData.data[i + 2] = Math.max(0, Math.min(255, imageData.data[i + 2] + noise));
-  }
-  ctx.putImageData(imageData, 0, 0);
 
   return new THREE.CanvasTexture(canvas);
 }
@@ -110,15 +100,31 @@ export function createBall() {
   const material = new THREE.MeshStandardMaterial({
     map: createBallTexture(),
     bumpMap: createBumpTexture(),
-    bumpScale: 0.02,
-    roughness: 0.6,
-    metalness: 0.05,
+    bumpScale: 0.015,
+    roughness: 0.5,
+    metalness: 0.0,
+    emissive: 0xffffff,
+    emissiveIntensity: 0.08
   });
 
   const ball = new THREE.Mesh(geometry, material);
   ball.castShadow = true;
   ball.receiveShadow = true;
-  ball.position.set(0, 0.35, 15);
+  ball.position.set(0, 0.35, 11); // penalty spot position
+
+  // Create ground shadow marker (white circle beneath ball)
+  const shadowGeo = new THREE.CircleGeometry(0.45, 32);
+  const shadowMat = new THREE.MeshBasicMaterial({
+    color: 0x000000,
+    transparent: true,
+    opacity: 0.3,
+    depthWrite: false
+  });
+  const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.set(0, 0.01, 11);
+  ball.add(shadow);
+  ball.userData.shadow = shadow;
 
   return ball;
 }

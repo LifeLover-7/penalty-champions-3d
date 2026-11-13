@@ -6,15 +6,17 @@ import * as THREE from 'three';
 const GOAL_WIDTH = 7.32;
 const GOAL_HEIGHT = 2.44;
 const GOAL_DEPTH = 2.0;
-const POST_RADIUS = 0.06;
+const POST_RADIUS = 0.12; // Thicker posts for visibility
 
 export function createGoal() {
   const goal = new THREE.Group();
 
   const postMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
-    metalness: 0.8,
-    roughness: 0.2,
+    metalness: 0.9,
+    roughness: 0.15,
+    emissive: 0xffffff,
+    emissiveIntensity: 0.1
   });
 
   // Left post

@@ -236,7 +236,7 @@ export class Game {
     this.ui.hideZoneSelector();
 
     const shot = this.currentAIShot;
-    this.ballPhysics.position.set(0, 0.35, 15);
+    this.ballPhysics.position.set(0, 0.35, 11);
     this.ballPhysics.shoot(shot.power, shot.aimX, shot.aimY, shot.curve);
 
     playKick();
@@ -255,8 +255,8 @@ export class Game {
 
   // === CAMERA POSITIONS ===
   setCameraForShooter() {
-    this.cameraTarget.set(0, 1.5, 0);
-    this.cameraPosition.set(0, 2.5, 19);
+    this.cameraTarget.set(0, 1.2, 0);
+    this.cameraPosition.set(0, 2.4, 15.5);
   }
 
   setCameraForKeeper() {
@@ -385,6 +385,11 @@ export class Game {
     if (this.state === STATE.BALL_FLYING_PLAYER || this.state === STATE.BALL_FLYING_AI) {
       this.ballPhysics.update(effectiveDt);
       this.ball.position.copy(this.ballPhysics.position);
+
+      // Keep shadow on ground beneath ball
+      if (this.ball.userData.shadow) {
+        this.ball.userData.shadow.position.set(0, 0.01 - this.ball.position.y, 0);
+      }
 
       // Ball rotation based on velocity
       if (this.ballPhysics.velocity.length() > 0.1) {

@@ -128,7 +128,7 @@ export class SwipeTracker {
 // === BALL PHYSICS STATE ===
 export class BallPhysics {
   constructor() {
-    this.position = new THREE.Vector3(0, BALL_RADIUS, 15);
+    this.position = new THREE.Vector3(0, BALL_RADIUS, 11);
     this.velocity = new THREE.Vector3(0, 0, 0);
     this.angularVelocity = new THREE.Vector3(0, 0, 0); // spin
     this.isFlying = false;
@@ -315,7 +315,7 @@ export class BallPhysics {
   }
 
   reset() {
-    this.position.set(0, BALL_RADIUS, 15);
+    this.position.set(0, BALL_RADIUS, 11);
     this.velocity.set(0, 0, 0);
     this.angularVelocity.set(0, 0, 0);
     this.isFlying = false;
