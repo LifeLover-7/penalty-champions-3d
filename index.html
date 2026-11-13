@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Penalty Champions 3D</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="game-container">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Swipe trail overlay -->
+    <canvas id="trail-canvas"></canvas>
+
+    <!-- HUD Overlay -->
+    <div id="hud">
+      <!-- Scoreboard -->
+      <div id="scoreboard">
+        <div class="team team-player">
+          <div class="team-name">YOU</div>
+          <div class="team-score" id="player-score">0</div>
+          <div class="round-dots" id="player-dots">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          </div>
+        </div>
+        <div class="score-divider">
+          <div class="round-label" id="round-label">ROUND 1</div>
+          <div class="vs">VS</div>
+        </div>
+        <div class="team team-ai">
+          <div class="team-name">CPU</div>
+          <div class="team-score" id="ai-score">0</div>
+          <div class="round-dots" id="ai-dots">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Role indicator -->
+      <div id="role-indicator" class="hidden">
+        <span id="role-text">YOUR TURN: SHOOT</span>
+      </div>
+
+      <!-- Power / Curve meter -->
+      <div id="power-meter" class="hidden">
+        <div class="meter-label">POWER</div>
+        <div class="meter-bar"><div class="meter-fill" id="power-fill"></div></div>
+        <div class="meter-label">CURVE</div>
+        <div class="meter-bar"><div class="meter-fill curve-fill" id="curve-fill"></div></div>
+      </div>
+
+      <!-- Zone selector for keeper mode -->
+      <div id="zone-selector" class="hidden">
+        <div class="zone-grid">
+          <button class="zone-btn" data-zone="0">↖</button>
+          <button class="zone-btn" data-zone="1">↑</button>
+          <button class="zone-btn" data-zone="2">↗</button>
+          <button class="zone-btn" data-zone="3">←</button>
+          <button class="zone-btn" data-zone="4">↓</button>
+          <button class="zone-btn" data-zone="5">→</button>
+        </div>
+      </div>
+
+      <!-- Message overlay -->
+      <div id="message-overlay" class="hidden">
+        <div id="message-text"></div>
+      </div>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="start-screen">
+      <div class="start-content">
+        <h1>⚽ PENALTY<br>CHAMPIONS 3D</h1>
+        <p class="subtitle">Swipe to shoot. Click zones to save.</p>
+        <button id="start-btn">KICK OFF</button>
+      </div>
+    </div>
+
+    <!-- End Screen / Modal -->
+    <div id="end-screen" class="hidden">
+      <div class="end-content">
+        <h2 id="end-title">MATCH OVER</h2>
+        <div id="end-score"></div>
+        <button id="replay-btn">PLAY AGAIN</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
